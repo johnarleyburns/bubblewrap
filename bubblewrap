@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+import argparse
+import datetime
+import dateutil.parser
+import docx
+import io
+import re
+import requests
+import sys
+import urllib.parse
+
+parser = argparse.ArgumentParser(description='Project Bubble CLI tool')
+
+parser.add_argument('command', choices=['tasks', 'users', 'comments'],
+                    help='The command to run')
+parser.add_argument('--email', help='The email of the user to query')
+parser.add_argument('--domain', required=True, help='The Project Bubble Domain URL')
+parser.add_argument('--key', required=True, help='The Project Bubble API Key')
+parser.add_argument('--output-to-doc-file',
+                    help='Output results to a formatted Microsoft Word document')
+parser.add_argument('--project', required=True,
+                    help='The ID of the project to query')
+parser.add_argument('--since', help='The date to query from')
+parser.add_argument('--task_name', help='The name of the task to query')
+parser.add_argument('--title', help='The title of the document to output')
+parser.add_argument('--with-task-name', action=argparse.BooleanOptionalAction,
+                    help='Whether to include and group by the task name in the output')
+
+args = parser.parse_args()
+
+headers = {
+    'key': args.key,
+    'domain': args.domain
+}
+
+params = { 'project': args.project }
+
+### ARGUMENTS BEGIN BELOW ###
+
+if args.email:
+    user_params = { 'project': args.project, 'email': args.email }
+    user_url = f'https://api.projectbubble.com/v2/user?' + urllib.parse.urlencode(user_params)
+    user_response = requests.get(user_url, headers=headers)
+    user_id = user_response.json()['data']['id']
+    params[user_id] = user_id
+    if params.get('user_id') == None:
+        print(f"No user found with email '{args.email}'")
+        exit()
+
+if args.task_name:
+    tasks_params = { 'project': args.project, 'status': 'open' }
+    tasks_url = f'https://api.projectbubble.com/v2/tasks?' + urllib.parse.urlencode(tasks_params)
+    tasks_response = requests.get(tasks_url, headers=headers)
+    tasks_data = tasks_response.json()['data']
+    for task in tasks_data:
+        if task['task_name'] == args.task_name:
+            params['task_id'] = task['task_id']
+            break
+    if params.get('task_id') == None:
+        print(f"No task found with name '{args.task_name}'")
+        exit()
+if args.with_task_name:
+    params['with_task_name'] = 'true'
+
+since = datetime.date.min
+if args.since:
+    since = dateutil.parser.parse(args.since).date()
+
+task_names = {}
+if args.with_task_name:
+    tasks_params = { 'project': args.project, 'status': 'open' }
+    tasks_url = f'https://api.projectbubble.com/v2/tasks?' + urllib.parse.urlencode(tasks_params)
+    tasks_response = requests.get(tasks_url, headers=headers)
+    tasks_data = tasks_response.json()['data']
+    for task in tasks_data:
+        task_names[task['task_id']] = task['task_name']
+
+### FUNCTIONS BEGIN BELOW ###
+
+def clean_comment(comment):
+    return re.sub('</?span>', ' ', comment, flags=re.IGNORECASE)
+
+def add_comment_to_doc(comment, doc):
+    comment = clean_comment(comment["comment"])
+    doc.add_paragraph(comment)
+
+def add_task_comments_to_doc(task_name, comment_list, doc):
+    doc.add_heading(task_name, level=1)
+    for comment in comment_list:
+        add_comment_to_doc(comment, doc)
+
+def output_comments_as_word_doc(task_comments, output_file):
+    doc = docx.Document()
+    if args.title:
+        doc.add_heading(args.title, level=0)
+    for task_id, comment_list in task_comments.items():
+        task_name = task_names[task_id]
+        add_task_comments_to_doc(task_name, comment_list, doc)
+
+    doc.save(output_file)
+
+def output_comments_as_text(task_comments):
+    if args.title:
+        print(args.title)
+        print()
+    for task_id, comments in task_comments.items():
+        if args.with_task_name:
+            print(task_names[task_id])
+            print()
+        for comment in comments:
+            comment_text = clean_comment(comment['comment'])
+            print(f"    {comment_text}")
+        print()
+
+### COMMANDS BEGIN BELOW ###
+
+if args.command == 'tasks':
+    params['status'] = 'open'
+    params['project'] = args.project
+    url = f'https://api.projectbubble.com/v2/tasks?' + urllib.parse.urlencode(params)
+
+    response = requests.get(url, headers=headers)
+    data = response.json()['data']
+
+    task_map = {}
+    for task in data:
+        task_map[task['task_id']] = task['task_name']
+
+    for task_id, task_name in task_map.items():
+        print(task_name)
+
+elif args.command == 'users':
+    params['project'] = args.project
+    #if args.email:
+    #    params['email'] = args.email
+    url = f'https://api.projectbubble.com/v2/user?' + urllib.parse.urlencode(params)
+
+    response = requests.get(url, headers=headers)
+    data = response.json()['data']
+
+    print(data['email'])
+
+elif args.command == 'comments':
+    task_comments = {}
+    url = f'https://api.projectbubble.com/v2/comments?' + urllib.parse.urlencode(params)
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    data = response.json()['data']
+    for comment in data:
+        dm = dateutil.parser.parse(comment['date_modified'])
+        if (dm.date() < since):
+            continue
+        task_id = comment['task_id']
+        task_comments.setdefault(task_id, []).append(comment)
+    
+    task_comments_sorted = dict(sorted(task_comments.items(), key=lambda x: task_names[x[0]])) if args.with_task_name else task_comments
+
+    if args.output_to_doc_file:
+        output_comments_as_word_doc(task_comments_sorted, args.output_to_doc_file)
+    else:
+        output_comments_as_text(task_comments_sorted)
+
