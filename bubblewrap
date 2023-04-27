@@ -3,16 +3,15 @@ import argparse
 import datetime
 import dateutil.parser
 import docx
-import io
 import re
 import requests
-import sys
 import urllib.parse
 
 parser = argparse.ArgumentParser(description='Project Bubble CLI tool')
 
 parser.add_argument('command', choices=['tasks', 'users', 'comments'],
                     help='The command to run')
+parser.add_argument('--as-of', help='Add an as-of date to the output')
 parser.add_argument('--email', help='The email of the user to query')
 parser.add_argument('--domain', required=True, help='The Project Bubble Domain URL')
 parser.add_argument('--key', required=True, help='The Project Bubble API Key')
@@ -82,7 +81,7 @@ def clean_comment(comment):
 
 def add_comment_to_doc(comment, doc):
     comment = clean_comment(comment["comment"])
-    doc.add_paragraph(comment)
+    doc.add_paragraph(comment, style='List Bullet')
 
 def add_task_comments_to_doc(task_name, comment_list, doc):
     doc.add_heading(task_name, level=1)
@@ -93,6 +92,8 @@ def output_comments_as_word_doc(task_comments, output_file):
     doc = docx.Document()
     if args.title:
         doc.add_heading(args.title, level=0)
+        if (args.as_of):
+            doc.add_paragraph(f"As of {args.as_of}")
     for task_id, comment_list in task_comments.items():
         task_name = task_names[task_id]
         add_task_comments_to_doc(task_name, comment_list, doc)
@@ -102,6 +103,8 @@ def output_comments_as_word_doc(task_comments, output_file):
 def output_comments_as_text(task_comments):
     if args.title:
         print(args.title)
+        if (args.as_of):
+            print(f"As of {args.as_of}")
         print()
     for task_id, comments in task_comments.items():
         if args.with_task_name:
@@ -131,8 +134,8 @@ if args.command == 'tasks':
 
 elif args.command == 'users':
     params['project'] = args.project
-    #if args.email:
-    #    params['email'] = args.email
+    if args.email:
+        params['email'] = args.email
     url = f'https://api.projectbubble.com/v2/user?' + urllib.parse.urlencode(params)
 
     response = requests.get(url, headers=headers)
