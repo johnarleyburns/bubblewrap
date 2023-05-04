@@ -76,17 +76,36 @@ if args.with_task_name:
 
 ### FUNCTIONS BEGIN BELOW ###
 
-def clean_comment(comment):
-    return re.sub('</?span>', ' ', comment, flags=re.IGNORECASE)
+def clean_text(comment):
+    comment = re.sub('</?div>', '', comment, flags=re.IGNORECASE)
+    comment = re.sub('</?span[^>]*>', '', comment, flags=re.IGNORECASE)
+    comment = re.sub('&amp;', '&', comment, flags=re.IGNORECASE)
+    comment = re.sub('&nbsp;', ' ', comment, flags=re.IGNORECASE)
+    comment = comment.strip()
+    return comment
+
+def expand_comment_list(comment_list):
+    expanded_comment_list = []
+    for comment in comment_list:
+        comment['comment'] = re.sub('^<div>', '', comment['comment'], flags=re.IGNORECASE)
+        comment['comment'] = re.sub('</div>(<div>)?', '\n', comment['comment'], flags=re.IGNORECASE)
+        comment['comment'] = re.sub('<div>', '\n', comment['comment'], flags=re.IGNORECASE)
+        comments = comment['comment'].split('\n')
+        comments = list(map(lambda x : {'comment': x}, comments))
+        comments = list(map(lambda x : {'comment': clean_text(x['comment'])}, comments))
+        comments = [comment for comment in comments if comment['comment'].strip() != '']
+        expanded_comment_list += comments
+    return expanded_comment_list
 
 def add_comment_to_doc(comment, doc):
-    comment = clean_comment(comment["comment"])
+    print('comment: //', comment, '//')
     doc.add_paragraph(comment, style='List Bullet')
 
 def add_task_comments_to_doc(task_name, comment_list, doc):
+    print('heading: //', clean_text(task_name), '//')
     doc.add_heading(task_name, level=1)
     for comment in comment_list:
-        add_comment_to_doc(comment, doc)
+        add_comment_to_doc(comment['comment'], doc)
 
 def output_comments_as_word_doc(task_comments, output_file):
     doc = docx.Document()
@@ -96,7 +115,8 @@ def output_comments_as_word_doc(task_comments, output_file):
             doc.add_paragraph(f"As of {args.as_of}")
     for task_id, comment_list in task_comments.items():
         task_name = task_names[task_id]
-        add_task_comments_to_doc(task_name, comment_list, doc)
+        comment_list_expanded = expand_comment_list(comment_list)
+        add_task_comments_to_doc(task_name, comment_list_expanded, doc)
 
     doc.save(output_file)
 
@@ -110,8 +130,9 @@ def output_comments_as_text(task_comments):
         if args.with_task_name:
             print(task_names[task_id])
             print()
-        for comment in comments:
-            comment_text = clean_comment(comment['comment'])
+        comments_expanded = expand_comment_list(comments)
+        for comment in comments_expanded:
+            comment_text = comment['comment']
             print(f"    {comment_text}")
         print()
 
